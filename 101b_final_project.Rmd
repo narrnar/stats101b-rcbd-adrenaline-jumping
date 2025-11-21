@@ -1,0 +1,194 @@
+---
+title: "101b_project"
+author: "Daren Sathasivam"
+date: "2024-05-27"
+output: pdf_document
+---
+```{r setup, include=FALSE}
+library(formatR)
+knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 60), tidy = TRUE)
+```
+
+
+# Load packages needed:
+```{r}
+library(ggplot2)
+library(readxl)
+library(DescTools)
+library(agricolae)
+library(pwr) 
+```
+
+
+# Read in Data(make sure working directory is correct):
+```{r}
+data <- read_excel("project.xlsx")
+# data <- read.csv("project.csv")
+head(data)
+```
+
+# Create Models:
+```{r}
+# Define response variable, treatments, and blocks
+response <- data$`Change in Blood Adrenaline Levels`
+treatments <- as.factor(data$`Time Jumped (sec)`) 
+age <- (data$Age)
+gender <- (data$Sex)
+
+
+# Simple model
+model1 <- lm(response ~ treatments + age + gender)
+summary(model1)
+
+# ANOVA
+model1_aov <- aov(response ~ treatments + age + gender)
+summary(model1_aov)
+coef(model1_aov)
+
+# Model Equation
+# Model without factor to get model equation
+treatments_nofac <- data$`Time Jumped (sec)`
+model1_nofac <- lm(response ~ treatments_nofac + age + gender)
+model1_nofac_aov <- aov(response ~ treatments_nofac + age + gender)
+summary(model1_nofac)
+summary(model1_nofac_aov)
+
+model_no_baseline <- lm(response ~ 0 + treatments_nofac + age + gender, data = data)
+# Calculate the mean coefficient for treatments
+treatment_coeffs <- coef(model_no_baseline)[grep("treatments", names(coef(model_no_baseline)))]
+mean_treatment_effect <- mean(treatment_coeffs)
+# Construct the model equation including the average treatment effect
+model_coeffs <- coef(model_no_baseline)
+coeff_names <- names(model_coeffs)
+# Initialize the equation with the intercept given from model nofac summary
+equation <- "y = 1397.295"
+equation <- sprintf("%s + %.2f*Treatment", equation, mean_treatment_effect)
+# Get values and then add to equation
+for (name in coeff_names[!grepl("treatments", coeff_names)]) {
+    sign <- ifelse(model_coeffs[name] >= 0, "+", "-")
+    equation <- sprintf("%s %s %.2f*%s", equation, sign, abs(model_coeffs[name]), name)
+}
+equation <- sprintf("%s + e", equation)
+# Output equation
+equation
+```
+
+# Plot Models:
+```{r}
+# Basic plots for model assumptions
+plot(model1)
+
+# Post-hoc tests
+tukey1 <- TukeyHSD(model1_aov, "treatments")
+tukey1
+
+posthoc_lsd <- LSD.test(model1_aov, "treatments", p.adj = "none")
+posthoc_lsd
+```
+
+
+# Other Plots:
+```{r}
+# Calculate means and confidence intervals for plotting
+treatment_means <- aggregate(response ~ treatments, data = data, mean)
+treatment_se <- aggregate(response ~ treatments, data = data, function(x) sd(x) / sqrt(length(x)))
+
+# Merge means and standard errors for plotting
+plot_data <- merge(treatment_means, treatment_se, by = "treatments")
+names(plot_data) <- c("treatments", "mean", "se")
+
+# Bar Graph 
+ggplot(plot_data, aes(x=treatments, y=mean, fill=treatments)) +
+  geom_bar(stat="identity", position=position_dodge(), color="black") +
+  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=.2, position=position_dodge(.9)) +
+  labs(title="Effect of Jumping Time on Blood Adrenaline Levels", x="Jumping Time (seconds)", y="Mean Change in Blood Adrenaline Levels") +
+  theme_minimal()
+
+# Boxplot
+ggplot(data, aes(y=factor(treatments), x=response, fill=factor(treatments))) +
+  geom_boxplot() +
+  labs(title="Adrenaline Level Changes Across Jumping Times", y="Jumping Time (seconds)", x="Change in Blood Adrenaline Levels") +
+  theme_minimal()
+```
+
+
+
+# Power Analysis:
+```{r}
+summary(model1_aov)
+summary(model1_nofac)
+# R^2 from model summary
+R_squared <- 0.9262
+k <- 4 # Number of predictors
+n <- length(response) / k # 27
+# Effect size f:
+group_means <- c(8152.444, 6587.244, 4399.126, 2239.581) # Group means obtained from Fisher LSD
+d <- max(group_means) - min(group_means) # 5912.863
+sigma <- sqrt(461272) # MSE from ANOVA for model1_aov (679.1701)
+f0 <- d / sigma # From CH3 Slide 43/44
+f0 # 8.706012
+# Adjusted d so effect size is not too large
+d_set <- 1500
+f <- d_set / sigma # 2.208578 with max distance set as 1500
+
+# Power analysis for ANOVA
+power_analysis <- pwr.anova.test(k = k,  # Number of predictors
+                              n = n,  # Degrees of freedom of residuals
+                              f = f0,
+                              sig.level = 0.05,
+                              power = NULL) 
+power_analysis
+
+# Calculate required sample size for a power of 0.95
+sample_size_analysis <- pwr.anova.test(k = k,
+                                    f = f,
+                                    power = 0.95)
+sample_size_analysis
+```
+
+
+
+# Ethan's methods:
+```{r}
+a <- read.csv("project.csv")
+head(a)
+
+age <- as.factor(a$Age)
+gender <- as.factor(a$Sex)
+response <- a$Post.Jump.Adrenaline..pg.mL.
+treatments <- as.factor(a$Time.Jumped..sec.)
+
+model2 <- aov(response ~ treatments + age + gender)
+summary(model2)
+
+par(mfrow=c(1,2))
+plot(model2$fitted.values, model2$residuals)
+
+qqnorm(model2$residuals)
+qqline(model2$residuals)
+
+# PostHocTest(model2, method = "lsd")
+# TukeyHSD(model2)
+
+treatment_means <- aggregate(response ~ treatments, data = a, mean)
+treatment_se <- aggregate(response ~ treatments, data = a, function(x) sd(x) / sqrt(length(x)))
+
+# Merge means and standard errors for plotting
+plot_data <- merge(treatment_means, treatment_se, by = "treatments")
+names(plot_data) <- c("treatments", "mean", "se")
+
+# Bar Graph Plot for each level of treatment
+ggplot(plot_data, aes(x=treatments, y=mean, fill=treatments)) +
+  geom_bar(stat="identity", position=position_dodge(), color="black") +
+  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=.2, position=position_dodge(.9)) +
+  labs(title="Effect of Jumping Time on Blood Adrenaline Levels", x="Jumping Time (seconds)", y="Mean Change in Blood Adrenaline Levels") +
+  theme_minimal()
+
+# Boxplot
+ggplot(data, aes(y=factor(treatments), x=response, fill=factor(treatments))) +
+  geom_boxplot() +
+  labs(title="Adrenaline Level Changes Across Jumping Times", y="Jumping Time (seconds)", x="Change in Blood Adrenaline Levels") +
+  theme_minimal()
+```
+
+
